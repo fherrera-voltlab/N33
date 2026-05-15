@@ -8,6 +8,25 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// Tags predefinidos para noticiero de México
+const PREDEFINED_TAGS = [
+  'Política',
+  'Economía',
+  'Tecnología',
+  'Deportes',
+  'Cultura',
+  'Salud',
+  'Seguridad',
+  'Educación',
+  'Medio Ambiente',
+  'Internacional',
+  'Negocios',
+  'Entretenimiento',
+  'Sociedad',
+  'Justicia',
+  'Infraestructura',
+];
+
 interface MediaFile {
   id: string;
   file: File;
@@ -38,16 +57,19 @@ export default function NewsForm() {
   const [inputCategory, setInputCategory] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{type: 'success' | 'error'; text: string} | null>(null);
+  const [showTagDropdown, setShowTagDropdown] = useState(false);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setForm((prev) => ({...prev, [name]: value}));
   };
 
-  const addTag = () => {
-    if (inputTag.trim() && !form.tags.includes(inputTag.trim())) {
-      setForm((prev) => ({...prev, tags: [...prev.tags, inputTag.trim()]}));
+  const addTag = (tag?: string) => {
+    const tagToAdd = tag || inputTag.trim();
+    if (tagToAdd && !form.tags.includes(tagToAdd)) {
+      setForm((prev) => ({...prev, tags: [...prev.tags, tagToAdd]}));
       setInputTag('');
+      setShowTagDropdown(false);
     }
   };
 
@@ -177,6 +199,8 @@ export default function NewsForm() {
     }
   };
 
+  const availableTags = PREDEFINED_TAGS.filter(tag => !form.tags.includes(tag));
+
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4">
       <div className="max-w-2xl mx-auto">
@@ -227,12 +251,40 @@ export default function NewsForm() {
 
           <div>
             <label className="block text-sm font-semibold text-slate-900 mb-2">Tags</label>
-            <div className="flex gap-2 mb-3">
-              <input type="text" value={inputTag} onChange={(e) => setInputTag(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }} placeholder="Ej: energía" className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-              <button type="button" onClick={addTag} className="px-4 py-3 bg-slate-200 text-slate-900 font-medium rounded-lg hover:bg-slate-300">+</button>
+            <div className="relative">
+              <div className="flex gap-2 mb-3">
+                <input 
+                  type="text" 
+                  value={inputTag} 
+                  onChange={(e) => { setInputTag(e.target.value); setShowTagDropdown(true); }} 
+                  onKeyPress={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }} 
+                  onFocus={() => setShowTagDropdown(true)}
+                  placeholder="Busca o agrega un tag" 
+                  className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                />
+                <button type="button" onClick={() => addTag()} className="px-4 py-3 bg-slate-200 text-slate-900 font-medium rounded-lg hover:bg-slate-300">+</button>
+              </div>
+
+              {showTagDropdown && availableTags.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-300 rounded-lg shadow-lg z-10 max-h-40 overflow-y-auto">
+                  {availableTags
+                    .filter(tag => tag.toLowerCase().includes(inputTag.toLowerCase()))
+                    .map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => addTag(tag)}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-100 border-b border-slate-200 last:border-b-0"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
+
             {form.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 mt-3">
                 {form.tags.map((tag) => (
                   <span key={tag} className="inline-flex items-center gap-2 px-3 py-1 bg-purple-100 text-purple-900 rounded-full text-sm">
                     #{tag}
