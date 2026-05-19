@@ -1,12 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface MediaFile {
   id: string;
@@ -120,19 +114,13 @@ export default function NewsForm() {
 
   const moveMedia = (id: string, direction: 'up' | 'down') => {
     const index = media.findIndex((m) => m.id === id);
-    if (
-      (direction === 'up' && index === 0) ||
-      (direction === 'down' && index === media.length - 1)
-    ) {
+    if ((direction === 'up' && index === 0) || (direction === 'down' && index === media.length - 1)) {
       return;
     }
 
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     const newMedia = [...media];
-    [newMedia[index], newMedia[newIndex]] = [
-      newMedia[newIndex],
-      newMedia[index],
-    ];
+    [newMedia[index], newMedia[newIndex]] = [newMedia[newIndex], newMedia[index]];
 
     setMedia(newMedia.map((m, i) => ({ ...m, order: i })));
   };
@@ -149,35 +137,6 @@ export default function NewsForm() {
     return true;
   };
 
-  const uploadMedia = async (articleId: string): Promise<void> => {
-    for (const m of media) {
-      const fileName = `${articleId}/${m.id}-${m.file.name}`;
-      const bucketPath = `articles/${fileName}`;
-
-      try {
-        const { error: uploadError } = await supabase.storage
-          .from('news-uploads')
-          .upload(bucketPath, m.file, { cacheControl: '3600', upsert: false });
-
-        if (uploadError) throw uploadError;
-
-        const { error: mediaError } = await supabase
-          .from('article_media')
-          .insert({
-            article_id: articleId,
-            file_path: bucketPath,
-            file_type: m.type,
-            display_order: m.order,
-          });
-
-        if (mediaError) throw mediaError;
-      } catch (err) {
-        console.error(`Error uploading media ${m.file.name}:`, err);
-        throw err;
-      }
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage(null);
@@ -187,36 +146,47 @@ export default function NewsForm() {
     setLoading(true);
 
     try {
-      const { data: article, error: insertError } = await supabase
-        .from('articles')
-        .insert({
+      // Convertir archivos a base64 para enviar por webhook
+      const mediaData = await Promise.all(
+        media.map(async (m) => {
+          const buffer = await m.file.arrayBuffer();
+          const base64 = Buffer.from(buffer).toString('base64');
+          return {
+            name: m.file.name,
+            type: m.type,
+            size: m.file.size,
+            base64: base64,
+            order: m.order,
+          };
+        })
+      );
+
+      // Enviar al webhook de n8n
+      const response = await fetch('https://n8n.voltlab.voltlap.com/webhook/N33', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           title: form.title,
           subtitle: form.subtitle,
           body: form.body,
           categories: form.categories.length > 0 ? form.categories : [],
           tags: form.tags.length > 0 ? form.tags : [],
-          status: 'pending',
-        })
-        .select()
-        .single();
+          media: mediaData,
+          timestamp: new Date().toISOString(),
+        }),
+      });
 
-      if (insertError) throw insertError;
-      if (!article) throw new Error('No se pudo crear el artículo');
-
-      if (media.length > 0) {
-        try {
-          await uploadMedia(article.id);
-        } catch (mediaErr) {
-          console.error('Media upload error:', mediaErr);
-        }
+      if (!response.ok) {
+        throw new Error(`Error al enviar: ${response.statusText}`);
       }
+
+      const result = await response.json();
 
       setMessage({
         type: 'success',
-        text: `✓ Artículo creado correctamente. ID: ${article.id.slice(
-          0,
-          8
-        )}...`,
+        text: `✓ Artículo enviado correctamente. ID: ${result.id || 'procesando...'}`,
       });
 
       setForm({
@@ -230,8 +200,7 @@ export default function NewsForm() {
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : 'Error desconocido';
+      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
       setMessage({ type: 'error', text: `Error: ${errorMsg}` });
       console.error('Submit error:', error);
     } finally {
@@ -437,20 +406,14 @@ export default function NewsForm() {
                 className="hidden"
               />
               <label htmlFor="media" className="cursor-pointer block">
-                <p className="text-slate-700 font-medium mb-1">
-                  📸 Selecciona imágenes o videos
-                </p>
-                <p className="text-sm text-slate-500">
-                  Arrastra aquí o haz click para seleccionar
-                </p>
+                <p className="text-slate-700 font-medium mb-1">📸 Selecciona imágenes o videos</p>
+                <p className="text-sm text-slate-500">Arrastra aquí o haz click para seleccionar</p>
               </label>
             </div>
 
             {media.length > 0 && (
               <div className="mt-6 space-y-3">
-                <h3 className="font-semibold text-slate-900">
-                  Medios ({media.length})
-                </h3>
+                <h3 className="font-semibold text-slate-900">Medios ({media.length})</h3>
                 {media.map((m, idx) => (
                   <div
                     key={m.id}
@@ -463,9 +426,7 @@ export default function NewsForm() {
                         className="w-12 h-12 object-cover rounded"
                       />
                       <div className="flex-1 text-left">
-                        <p className="font-medium text-slate-900 text-sm">
-                          {m.file.name}
-                        </p>
+                        <p className="font-medium text-slate-900 text-sm">{m.file.name}</p>
                         <p className="text-xs text-slate-500">
                           {(m.file.size / 1024 / 1024).toFixed(2)} MB • {m.type}
                         </p>
