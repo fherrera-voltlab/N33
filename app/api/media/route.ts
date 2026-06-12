@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logPublicacion } from '@/lib/log'
 
 const WP_URL = process.env.WP_URL
 const WP_USER = process.env.WP_USER
@@ -25,11 +26,16 @@ export async function POST(req: NextRequest) {
         'Content-Disposition': `attachment; filename="${file.name}"`,
         'Content-Type': file.type,
       },
-      body: buffer,
+      body: buffer as any,
     })
 
     if (!mediaRes.ok) {
       const error = await mediaRes.json()
+      await logPublicacion({
+        status: 'error',
+        error_message: error?.message ?? 'Error al subir imagen',
+        error_step: 'media',
+      })
       return NextResponse.json({ error }, { status: mediaRes.status })
     }
 
@@ -39,7 +45,12 @@ export async function POST(req: NextRequest) {
       url: media.source_url 
     })
 
-  } catch (err) {
+  } catch (err: any) {
+    await logPublicacion({
+      status: 'error',
+      error_message: err.message ?? 'Error al subir imagen',
+      error_step: 'media',
+    })
     return NextResponse.json({ error: 'Error al subir imagen' }, { status: 500 })
   }
 }
