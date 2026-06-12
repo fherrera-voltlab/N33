@@ -81,9 +81,12 @@ function FormularioPublicar() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [publishedUrl, setPublishedUrl] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{title?: boolean; content?: boolean; category?: boolean}>({})
   const fileRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const categoryRef = useRef<HTMLSelectElement>(null)
 
   // Cargar categorías
   useEffect(() => {
@@ -157,10 +160,24 @@ function FormularioPublicar() {
 
   // ── Publicar ──────────────────────────────────────────────
   const handlePublish = async () => {
-    if (!title || !content || !categoryId) {
-      setErrorMsg('Título, cuerpo y categoría son obligatorios.')
+    const errors: {title?: boolean; content?: boolean; category?: boolean} = {}
+    if (!title.trim()) errors.title = true
+    if (!content.trim() || content === '<br>') errors.content = true
+    if (!categoryId) errors.category = true
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setErrorMsg('Completá los campos marcados en rojo.')
+
+      // Scroll al primer campo con error
+      if (errors.title) titleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      else if (errors.category) categoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      else if (errors.content) editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
       return
     }
+
+    setFieldErrors({})
     setErrorMsg('')
     setStatus('loading')
 
@@ -218,7 +235,7 @@ function FormularioPublicar() {
           className="block w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition mb-3">
           Ver nota publicada
         </a>
-        <button onClick={() => { setStatus('idle'); setTitle(''); setExcerpt(''); setContent(''); setTags([]); setImage(null); setImagePreview(null); setCategoryId(null) }}
+        <button onClick={() => { setStatus('idle'); setTitle(''); setExcerpt(''); setContent(''); setTags([]); setImage(null); setImagePreview(null); setCategoryId(null); setFieldErrors({}) }}
           className="block w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition">
           Publicar otra nota
         </button>
@@ -232,11 +249,12 @@ function FormularioPublicar() {
       <div className="max-w-2xl mx-auto">
 
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
+        <div className="flex items-center gap-3 mb-2">
           <img src="https://noticias33.com/wp-content/uploads/2026/04/cropped-Captura-de-pantalla-2026-04-21-164553-69x47.png"
             alt="N33" className="h-8" />
           <h1 className="text-xl font-semibold text-gray-200">Nueva nota</h1>
         </div>
+        <p className="text-sm text-gray-500 mb-6">Los campos marcados con <span className="text-red-400">*</span> son obligatorios</p>
 
         {/* Imagen destacada */}
         <div
@@ -264,10 +282,12 @@ function FormularioPublicar() {
 
         {/* Título */}
         <input
-          type="text" placeholder="Título de la nota"
-          value={title} onChange={e => setTitle(e.target.value)}
-          className="w-full bg-gray-900 rounded-xl px-4 py-3 text-lg font-semibold placeholder-gray-600 
-            outline-none border-2 border-transparent focus:border-blue-500 transition mb-3"
+          ref={titleRef}
+          type="text" placeholder="Título de la nota *"
+          value={title} onChange={e => { setTitle(e.target.value); setFieldErrors(f => ({...f, title: false})) }}
+          className={`w-full bg-gray-900 rounded-xl px-4 py-3 text-lg font-semibold placeholder-gray-600 
+            outline-none border-2 transition mb-3 focus:border-blue-500
+            ${fieldErrors.title ? 'border-red-500' : 'border-transparent'}`}
         />
 
         {/* Subtítulo / Excerpt */}
@@ -280,12 +300,14 @@ function FormularioPublicar() {
 
         {/* Categoría */}
         <select
+          ref={categoryRef}
           value={categoryId ?? ''}
-          onChange={e => setCategoryId(Number(e.target.value))}
-          className="w-full bg-gray-900 rounded-xl px-4 py-3 text-gray-300 outline-none 
-            border-2 border-transparent focus:border-blue-500 transition mb-3 appearance-none"
+          onChange={e => { setCategoryId(Number(e.target.value)); setFieldErrors(f => ({...f, category: false})) }}
+          className={`w-full bg-gray-900 rounded-xl px-4 py-3 text-gray-300 outline-none 
+            border-2 transition mb-3 appearance-none focus:border-blue-500
+            ${fieldErrors.category ? 'border-red-500' : 'border-transparent'}`}
         >
-          <option value="" disabled>Seleccionar categoría</option>
+          <option value="" disabled>Seleccionar categoría *</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
 
@@ -293,9 +315,9 @@ function FormularioPublicar() {
         <div className="bg-gray-900 rounded-xl px-4 py-3 mb-6 border-2 border-transparent focus-within:border-blue-500 transition">
           <div className="flex flex-wrap gap-2 mb-2">
             {tags.map(tag => (
-              <span key={tag} className="bg-blue-900/60 text-blue-300 text-sm px-3 py-1 rounded-full flex items-center gap-1">
+              <span key={tag} className="bg-teal-900/60 text-teal-200 text-sm px-3 py-1 rounded-full flex items-center gap-1">
                 {tag}
-                <button onClick={() => removeTag(tag)} className="text-blue-400 hover:text-white transition ml-1">×</button>
+                <button onClick={() => removeTag(tag)} className="text-teal-300 hover:text-white transition ml-1">×</button>
               </span>
             ))}
           </div>
@@ -310,7 +332,7 @@ function FormularioPublicar() {
 
         {/* Editor */}
         <div className="relative mb-6">
-          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Cuerpo de la nota</p>
+          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Cuerpo de la nota *</p>
           <p className="text-xs text-gray-600 mb-3">Seleccioná texto para aplicar formato</p>
 
           {/* Barra flotante */}
@@ -344,11 +366,12 @@ function FormularioPublicar() {
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={() => setContent(editorRef.current?.innerHTML ?? '')}
+            onInput={() => { setContent(editorRef.current?.innerHTML ?? ''); setFieldErrors(f => ({...f, content: false})) }}
             data-placeholder="Escribí el cuerpo de la nota acá..."
-            className="min-h-64 bg-gray-900 rounded-xl px-4 py-3 outline-none border-2 
-              border-transparent focus:border-blue-500 transition text-gray-200 leading-relaxed
-              empty:before:content-[attr(data-placeholder)] empty:before:text-gray-600"
+            className={`min-h-64 bg-gray-900 rounded-xl px-4 py-3 outline-none border-2 
+              transition text-gray-200 leading-relaxed focus:border-blue-500
+              empty:before:content-[attr(data-placeholder)] empty:before:text-gray-600
+              ${fieldErrors.content ? 'border-red-500' : 'border-transparent'}`}
           />
         </div>
 
@@ -385,4 +408,4 @@ function ToolbarBtn({ onClick, title, children }: { onClick: () => void; title: 
       {children}
     </button>
   )
-}
+} 
