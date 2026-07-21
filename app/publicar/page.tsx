@@ -9,6 +9,45 @@ interface PostItem { id: number; title: string; date: string; link: string; thum
 // ── Constantes ─────────────────────────────────────────────────
 const ACCESS_CODE = process.env.NEXT_PUBLIC_ACCESS_CODE ?? '1111'
 
+// Ancho máximo y calidad JPEG para la imagen destacada. Las fotos de
+// cámara (sobre todo de celular) pueden pesar varios MB, y el endpoint de
+// subida (/api/media) corre en una función serverless de Vercel con un
+// límite de tamaño de payload: sin comprimir, esas fotos lo superan y la
+// subida falla con un error genérico antes de llegar a WordPress.
+const MAX_IMAGE_WIDTH = 1600
+const IMAGE_QUALITY = 0.8
+
+// Redimensiona (si hace falta) y recodifica la imagen como JPEG en el
+// propio navegador, vía <canvas>, antes de subirla. Si por algún motivo no
+// se puede procesar (falla el canvas, el navegador no lo soporta, etc.), se
+// resuelve con el archivo original tal cual en vez de bloquear al usuario.
+function compressImage(file: File): Promise<File> {
+  return new Promise(resolve => {
+    const objectUrl = URL.createObjectURL(file)
+    const img = new Image()
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      const scale = Math.min(1, MAX_IMAGE_WIDTH / img.width)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve(file); return }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+      canvas.toBlob(blob => {
+        if (!blob) { resolve(file); return }
+        const compressedName = file.name.replace(/\.[^.]+$/, '') + '.jpg'
+        resolve(new File([blob], compressedName, { type: 'image/jpeg' }))
+      }, 'image/jpeg', IMAGE_QUALITY)
+    }
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file) }
+    img.src = objectUrl
+  })
+}
+
 // ══════════════════════════════════════════════════════════════
 // Componente raíz de la página /publicar. Muestra, una vez logueado,
 // un dashboard de 2 columnas: a la izquierda el formulario para crear
@@ -227,12 +266,14 @@ function FormularioPublicar({ postId, onSaved, onExitEdit }: {
   }, [postId])
 
   // ── Imagen ────────────────────────────────────────────────
-  // Guarda el File elegido (se sube a WordPress recién al publicar, ver
-  // handlePublish) y genera una URL local de blob para previsualizarlo
-  // sin necesidad de subirlo antes de tiempo.
-  const handleImage = (file: File) => {
-    setImage(file)
-    setImagePreview(URL.createObjectURL(file))
+  // Comprime el archivo elegido (ver compressImage) y lo guarda (se sube a
+  // WordPress recién al publicar, ver handlePublish), generando además una
+  // URL local de blob para previsualizarlo sin necesidad de subirlo antes
+  // de tiempo.
+  const handleImage = async (file: File) => {
+    const compressed = await compressImage(file)
+    setImage(compressed)
+    setImagePreview(URL.createObjectURL(compressed))
   }
 
   // Soporte de drag&drop sobre el recuadro de imagen destacada

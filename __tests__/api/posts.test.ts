@@ -82,6 +82,46 @@ describe('GET /api/posts', () => {
     expect(calledUrl).toContain('_embed=wp%3Afeaturedmedia')
   })
 
+  it('si la respuesta con _embed no es un JSON válido, reintenta sin _embed y devuelve los posts (sin miniatura)', async () => {
+    global.fetch = jest.fn()
+      // Primer intento (con _embed): body no parseable como JSON.
+      .mockResolvedValueOnce(new Response('<b>no soy JSON</b>', { status: 200, headers: { 'X-WP-TotalPages': '1' } }))
+      // Segundo intento (fallback sin _embed): responde bien.
+      .mockResolvedValueOnce(mockWpResponse(wpPosts))
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const req = new NextRequest('http://localhost/api/posts')
+    const res = await GET(req)
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.posts).toEqual([
+      { id: 1, title: 'Primera nota', date: '2026-01-01T10:00:00', link: 'https://cms.test.local/primera-nota', thumbnail: null },
+      { id: 2, title: 'Segunda nota', date: '2026-01-02T10:00:00', link: 'https://cms.test.local/segunda-nota', thumbnail: null },
+    ])
+
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    const firstUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string
+    const secondUrl = (global.fetch as jest.Mock).mock.calls[1][0] as string
+    expect(firstUrl).toContain('_embed=')
+    expect(secondUrl).not.toContain('_embed=')
+  })
+
+  it('si la respuesta con _embed no es un array, reintenta sin _embed', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(mockWpResponse({ code: 'rest_error', message: 'algo raro' }))
+      .mockResolvedValueOnce(mockWpResponse(wpPosts))
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const req = new NextRequest('http://localhost/api/posts')
+    const res = await GET(req)
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.posts).toHaveLength(2)
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('con search=texto, incluye search en la URL de fetch a WordPress', async () => {
     global.fetch = jest.fn().mockResolvedValue(mockWpResponse(wpPosts))
 
