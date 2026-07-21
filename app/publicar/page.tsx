@@ -4,22 +4,28 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 
 // ── Tipos ──────────────────────────────────────────────────────
 interface Category { id: number; name: string }
-interface PostItem { id: number; title: string; date: string; link: string }
+interface PostItem { id: number; title: string; date: string; link: string; thumbnail: string | null }
 
 // ── Constantes ─────────────────────────────────────────────────
 const ACCESS_CODE = process.env.NEXT_PUBLIC_ACCESS_CODE ?? '1111'
 
 // ══════════════════════════════════════════════════════════════
-// Componente raíz de la página /publicar. Actúa como un pequeño
-// "router" de 3 pantallas (login / lista de notas / formulario) y
-// guarda en editingId qué nota se está editando (null = nota nueva).
+// Componente raíz de la página /publicar. Muestra, una vez logueado,
+// un dashboard de 2 columnas: a la izquierda el formulario para crear
+// o editar una nota, a la derecha el listado de notas ya publicadas
+// (con miniatura) para elegir cuál editar. editingId guarda qué nota
+// se está editando (null = nota nueva) y es compartido por ambas
+// columnas: la izquierda lo usa para precargar el formulario, la
+// derecha para resaltar la fila correspondiente en la lista.
 // ══════════════════════════════════════════════════════════════
 export default function PublicarPage() {
   const [authed, setAuthed] = useState(false) // true tras validar la clave de acceso
   const [code, setCode] = useState('') // valor tipeado en el input de clave
   const [codeError, setCodeError] = useState(false) // muestra el mensaje de "clave incorrecta"
-  const [view, setView] = useState<'form' | 'notas'>('form') // pantalla activa una vez autenticado
   const [editingId, setEditingId] = useState<number | null>(null) // id del post en edición, o null si es una nota nueva
+  // Se incrementa cada vez que se publica/edita una nota, para que
+  // ListaNotas vuelva a pedir el listado sin depender de una navegación.
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Permite abrir una nota en edición desde un enlace (ej. /publicar?editar=123)
   useEffect(() => {
@@ -40,27 +46,50 @@ export default function PublicarPage() {
   )
 
   // Cierra sesión y resetea el estado de navegación (no hay backend de sesión, es todo local)
-  const logout = () => { setAuthed(false); setCode(''); setEditingId(null); setView('form') }
-
-  if (view === 'notas') return (
-    <ListaNotas
-      onNueva={() => { setEditingId(null); setView('form') }}
-      onEditar={id => { setEditingId(id); setView('form') }}
-      onSalir={logout}
-    />
-  )
+  const logout = () => { setAuthed(false); setCode(''); setEditingId(null) }
 
   return (
-    // key={editingId} fuerza a React a desmontar/remontar el formulario al
-    // cambiar entre "nota nueva" y "editar nota X" (o entre dos notas
-    // distintas), así se resetea todo el estado interno del formulario
-    // en vez de tener que limpiarlo manualmente campo por campo.
-    <FormularioPublicar
-      key={editingId ?? 'nueva'}
-      postId={editingId}
-      onVerNotas={() => { setEditingId(null); setView('notas') }}
-      onSalir={logout}
-    />
+    <div className="min-h-screen bg-gray-950 text-white p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+
+        {/* Header compartido por las 2 columnas */}
+        <div className="flex items-center gap-3 mb-6">
+          <img src="https://noticias33.com/wp-content/uploads/2026/04/cropped-Captura-de-pantalla-2026-04-21-164553-69x47.png"
+            alt="N33" className="h-8" />
+          <h1 className="text-xl font-semibold text-gray-200">Portal de Redacción</h1>
+          <a href="/admin"
+            className="ml-auto text-gray-500 hover:text-white text-sm px-3 py-2 rounded-xl hover:bg-gray-900 transition">
+            Panel de administración
+          </a>
+          <button
+            onClick={logout}
+            className="text-gray-500 hover:text-white text-sm px-3 py-2 rounded-xl hover:bg-gray-900 transition"
+          >
+            Salir
+          </button>
+        </div>
+
+        {/* Grid de 2 columnas: formulario a la izquierda, listado a la derecha
+            (se apilan en una sola columna en pantallas chicas) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* key={editingId} fuerza a React a desmontar/remontar el formulario
+              al cambiar entre "nota nueva" y "editar nota X" (o entre dos
+              notas distintas), así se resetea todo el estado interno del
+              formulario en vez de tener que limpiarlo campo por campo. */}
+          <FormularioPublicar
+            key={editingId ?? 'nueva'}
+            postId={editingId}
+            onSaved={() => setRefreshKey(k => k + 1)}
+            onExitEdit={() => setEditingId(null)}
+          />
+          <ListaNotas
+            activeEditingId={editingId}
+            refreshToken={refreshKey}
+            onEditar={id => setEditingId(id)}
+          />
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -134,10 +163,10 @@ function LoginScreen({ code, setCode, error, onSubmit }: {
 // editor de texto enriquecido (contentEditable + barra flotante), tags,
 // imagen destacada, validación por campo y el envío final a WordPress.
 // ══════════════════════════════════════════════════════════════
-function FormularioPublicar({ postId, onVerNotas, onSalir }: {
+function FormularioPublicar({ postId, onSaved, onExitEdit }: {
   postId: number | null
-  onVerNotas: () => void
-  onSalir: () => void
+  onSaved: () => void // se llama justo al publicar/editar con éxito, para refrescar el listado de la derecha
+  onExitEdit: () => void // vuelve al modo "nota nueva" (botón Cancelar, o al terminar de editar)
 }) {
   const [categories, setCategories] = useState<Category[]>([]) // opciones del <select> de categoría, traídas de /api/categorias
   const [title, setTitle] = useState('')
@@ -347,6 +376,10 @@ function FormularioPublicar({ postId, onVerNotas, onSalir }: {
 
       setPublishedUrl(postData.url)
       setStatus('success')
+      // Se avisa al padre apenas se confirma el guardado (no hace falta que
+      // el usuario navegue a ningún lado) para que el listado de la derecha
+      // se actualice solo y muestre la nota nueva/editada.
+      onSaved()
     } catch (err: any) {
       setErrorMsg(err.message)
       setStatus('error')
@@ -369,58 +402,50 @@ function FormularioPublicar({ postId, onVerNotas, onSalir }: {
   }
 
   // ── Pantalla de éxito ─────────────────────────────────────
-  // En modo edición ofrece volver a la lista de notas; en modo creación
-  // ofrece resetear el formulario para publicar otra nota sin recargar la página
+  // En modo edición ofrece volver al modo "nota nueva" (el listado de la
+  // derecha ya se actualizó solo, ver onSaved); en modo creación ofrece
+  // resetear el formulario para publicar otra nota sin recargar la página.
   if (status === 'success') return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
-      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-sm text-center shadow-2xl">
-        <div className="text-5xl mb-4">✅</div>
-        <h2 className="text-white text-2xl font-bold mb-2">{postId ? '¡Nota actualizada!' : '¡Nota publicada!'}</h2>
-        <p className="text-gray-400 mb-6">{postId ? 'Los cambios ya están visibles en el sitio.' : 'La nota ya está visible en el sitio.'}</p>
-        <a href={publishedUrl} target="_blank"
-          className="block w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition mb-3">
-          Ver nota publicada
-        </a>
-        {postId ? (
-          <button onClick={onVerNotas}
-            className="block w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition">
-            Volver a mis notas
-          </button>
-        ) : (
-          <button onClick={() => { setStatus('idle'); setTitle(''); setExcerpt(''); setContent(''); setTags([]); setImage(null); setImagePreview(null); setCategoryId(null); setFieldErrors({}) }}
-            className="block w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition">
-            Publicar otra nota
-          </button>
-        )}
-      </div>
+    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8 text-center">
+      <div className="text-5xl mb-4">✅</div>
+      <h2 className="text-white text-2xl font-bold mb-2">{postId ? '¡Nota actualizada!' : '¡Nota publicada!'}</h2>
+      <p className="text-gray-400 mb-6">{postId ? 'Los cambios ya están visibles en el sitio.' : 'La nota ya está visible en el sitio.'}</p>
+      <a href={publishedUrl} target="_blank"
+        className="block w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition mb-3">
+        Ver nota publicada
+      </a>
+      {postId ? (
+        <button onClick={onExitEdit}
+          className="block w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition">
+          Listo, volver a nota nueva
+        </button>
+      ) : (
+        <button onClick={() => { setStatus('idle'); setTitle(''); setExcerpt(''); setContent(''); setTags([]); setImage(null); setImagePreview(null); setCategoryId(null); setFieldErrors({}) }}
+          className="block w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition">
+          Publicar otra nota
+        </button>
+      )}
     </div>
   )
 
   // ── Formulario ────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-4 md:p-8">
-      <div className="max-w-2xl mx-auto">
+    <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 md:p-6 h-fit">
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-2">
-          <img src="https://noticias33.com/wp-content/uploads/2026/04/cropped-Captura-de-pantalla-2026-04-21-164553-69x47.png"
-            alt="N33" className="h-8" />
-          <h1 className="text-xl font-semibold text-gray-200">{postId ? 'Editar nota' : 'Nueva nota'}</h1>
+      {/* Header del panel */}
+      <div className="flex items-center gap-3 mb-2">
+        <h2 className="text-lg font-semibold text-gray-200">{postId ? 'Editar nota' : 'Nueva nota'}</h2>
+        {postId && (
           <button
-            onClick={onVerNotas}
+            onClick={onExitEdit}
             className="ml-auto bg-gray-900 hover:bg-gray-800 text-gray-300 hover:text-white text-sm px-4 py-2 rounded-xl transition"
           >
-            Mis notas
+            Cancelar edición
           </button>
-          <button
-            onClick={onSalir}
-            className="text-gray-500 hover:text-white text-sm px-3 py-2 rounded-xl hover:bg-gray-900 transition"
-          >
-            Salir
-          </button>
-        </div>
-        {loadingPost && <p className="text-sm text-blue-400 mb-4">Cargando nota...</p>}
-        <p className="text-sm text-gray-500 mb-6">Los campos marcados con <span className="text-red-400">*</span> son obligatorios</p>
+        )}
+      </div>
+      {loadingPost && <p className="text-sm text-blue-400 mb-4">Cargando nota...</p>}
+      <p className="text-sm text-gray-500 mb-6">Los campos marcados con <span className="text-red-400">*</span> son obligatorios</p>
 
         {/* Imagen destacada */}
         <div
@@ -559,8 +584,6 @@ function FormularioPublicar({ postId, onVerNotas, onSalir }: {
             ? (postId ? '⏳ Guardando...' : '⏳ Publicando...')
             : (postId ? 'Guardar cambios' : 'Publicar nota')}
         </button>
-
-      </div>
     </div>
   )
 }
@@ -571,15 +594,15 @@ function FormularioPublicar({ postId, onVerNotas, onSalir }: {
 // Notas de muestra para previsualizar la interfaz cuando no hay
 // conexión a WordPress (solo se usan en desarrollo)
 const DEMO_POSTS: PostItem[] = [
-  { id: -1, title: '(Ejemplo) Argentina avanza en energías renovables', date: new Date().toISOString(), link: '#' },
-  { id: -2, title: '(Ejemplo) Nueva ley de medios entra en vigencia', date: new Date(Date.now() - 86400000).toISOString(), link: '#' },
-  { id: -3, title: '(Ejemplo) El dólar cierra la semana estable', date: new Date(Date.now() - 172800000).toISOString(), link: '#' },
+  { id: -1, title: '(Ejemplo) Argentina avanza en energías renovables', date: new Date().toISOString(), link: '#', thumbnail: null },
+  { id: -2, title: '(Ejemplo) Nueva ley de medios entra en vigencia', date: new Date(Date.now() - 86400000).toISOString(), link: '#', thumbnail: null },
+  { id: -3, title: '(Ejemplo) El dólar cierra la semana estable', date: new Date(Date.now() - 172800000).toISOString(), link: '#', thumbnail: null },
 ]
 
-function ListaNotas({ onNueva, onEditar, onSalir }: {
-  onNueva: () => void
+function ListaNotas({ onEditar, activeEditingId, refreshToken }: {
   onEditar: (id: number) => void
-  onSalir: () => void
+  activeEditingId: number | null // resalta en la lista la nota que se está editando en el panel de la izquierda
+  refreshToken: number // se incrementa desde el padre al guardar una nota, para refrescar la lista sin depender de una navegación
 }) {
   const [posts, setPosts] = useState<PostItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -589,10 +612,11 @@ function ListaNotas({ onNueva, onEditar, onSalir }: {
   const [deletingId, setDeletingId] = useState<number | null>(null) // id de la nota que se está eliminando, para deshabilitar solo su botón
   const [errorMsg, setErrorMsg] = useState('')
 
-  // Trae una página de posts (con búsqueda opcional por título) desde
-  // GET /api/posts. Si la petición falla y estamos en desarrollo, muestra
-  // notas de ejemplo (DEMO_POSTS) en vez de dejar la pantalla rota, para
-  // poder trabajar en la UI sin depender de la conexión real a WordPress.
+  // Trae una página de posts (con búsqueda opcional por título, y una
+  // miniatura de la imagen destacada) desde GET /api/posts. Si la petición
+  // falla y estamos en desarrollo, muestra notas de ejemplo (DEMO_POSTS) en
+  // vez de dejar la pantalla rota, para poder trabajar en la UI sin
+  // depender de la conexión real a WordPress.
   const fetchPosts = useCallback((p: number, s: string) => {
     setLoading(true)
     setErrorMsg('')
@@ -617,10 +641,11 @@ function ListaNotas({ onNueva, onEditar, onSalir }: {
       .finally(() => setLoading(false))
   }, [])
 
-  // Se re-ejecuta solo al cambiar de página; el filtro de búsqueda se
-  // aplica manualmente con el botón "Buscar" (ver buscar()), no en cada
-  // tecleo, para no golpear la API en cada carácter
-  useEffect(() => { fetchPosts(page, search) }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Se re-ejecuta al cambiar de página o cuando el formulario de la
+  // izquierda avisa que guardó una nota (refreshToken); el filtro de
+  // búsqueda se aplica manualmente con el botón "Buscar" (ver buscar()),
+  // no en cada tecleo, para no golpear la API en cada carácter.
+  useEffect(() => { fetchPosts(page, search) }, [page, refreshToken]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Vuelve a la página 1 al buscar, porque los resultados filtrados
   // pueden tener menos páginas que el listado completo
@@ -653,118 +678,122 @@ function ListaNotas({ onNueva, onEditar, onSalir }: {
   })
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-4 md:p-8">
-      <div className="max-w-2xl mx-auto">
+    <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 md:p-6">
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <img src="https://noticias33.com/wp-content/uploads/2026/04/cropped-Captura-de-pantalla-2026-04-21-164553-69x47.png"
-            alt="N33" className="h-8" />
-          <h1 className="text-xl font-semibold text-gray-200">Mis notas</h1>
-          <button
-            onClick={onNueva}
-            className="ml-auto bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-xl transition"
-          >
-            + Nueva nota
-          </button>
-          <button
-            onClick={onSalir}
-            className="text-gray-500 hover:text-white text-sm px-3 py-2 rounded-xl hover:bg-gray-900 transition"
-          >
-            Salir
-          </button>
+      {/* Header del panel */}
+      <div className="flex items-center gap-3 mb-4">
+        <h2 className="text-lg font-semibold text-gray-200">Mis notas</h2>
+      </div>
+
+      {/* Buscador */}
+      <div className="flex gap-2 mb-4">
+        <input
+          type="text" placeholder="Buscar por título..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && buscar()}
+          className="flex-1 bg-gray-900 rounded-xl px-4 py-3 placeholder-gray-600
+            outline-none border-2 border-transparent focus:border-blue-500 transition text-sm"
+        />
+        <button
+          onClick={buscar}
+          className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-xl text-sm transition"
+        >
+          Buscar
+        </button>
+      </div>
+
+      {/* Error */}
+      {errorMsg && (
+        <div className="bg-red-900/40 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4">
+          {errorMsg}
         </div>
+      )}
 
-        {/* Buscador */}
-        <div className="flex gap-2 mb-6">
-          <input
-            type="text" placeholder="Buscar por título..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && buscar()}
-            className="flex-1 bg-gray-900 rounded-xl px-4 py-3 placeholder-gray-600 
-              outline-none border-2 border-transparent focus:border-blue-500 transition text-sm"
-          />
-          <button
-            onClick={buscar}
-            className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-xl text-sm transition"
-          >
-            Buscar
-          </button>
-        </div>
-
-        {/* Error */}
-        {errorMsg && (
-          <div className="bg-red-900/40 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4">
-            {errorMsg}
-          </div>
-        )}
-
-        {/* Lista */}
-        {loading ? (
-          <p className="text-gray-500 text-sm">Cargando notas...</p>
-        ) : posts.length === 0 ? (
-          <p className="text-gray-500 text-sm">No se encontraron notas.</p>
-        ) : (
-          <div className="space-y-2">
-            {posts.map(post => (
-              <div key={post.id} className="bg-gray-900 rounded-xl px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-200 truncate"
-                      dangerouslySetInnerHTML={{ __html: post.title || '<span class="italic text-gray-500">Sin título</span>' }} />
-                    <p className="text-gray-500 text-xs mt-0.5">{formatDate(post.date)}</p>
+      {/* Lista */}
+      {loading ? (
+        <p className="text-gray-500 text-sm">Cargando notas...</p>
+      ) : posts.length === 0 ? (
+        <p className="text-gray-500 text-sm">No se encontraron notas.</p>
+      ) : (
+        <div className="space-y-2">
+          {posts.map(post => {
+            const editing = post.id === activeEditingId
+            return (
+              <div key={post.id}
+                className={`bg-gray-900 rounded-xl px-3 py-3 border-2 transition
+                  ${editing ? 'border-blue-500' : 'border-transparent'}`}
+              >
+                <div className="flex items-start gap-3">
+                  {/* Miniatura de la imagen destacada (o un ícono si no tiene) */}
+                  <div className="w-14 h-14 shrink-0 rounded-lg overflow-hidden bg-gray-800 flex items-center justify-center">
+                    {post.thumbnail
+                      ? <img src={post.thumbnail} alt="" className="w-full h-full object-cover" />
+                      : <span className="text-gray-600 text-xl">📰</span>}
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    <a href={post.link} target="_blank"
-                      className="text-teal-300 hover:text-teal-200 text-sm px-2 py-1 transition">
-                      Ver
-                    </a>
-                    <button
-                      onClick={() => onEditar(post.id)}
-                      className="bg-gray-800 hover:bg-gray-700 text-sm px-3 py-1 rounded-lg transition"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      onClick={() => handleDelete(post)}
-                      disabled={deletingId === post.id}
-                      className="bg-red-900/50 hover:bg-red-800 text-red-300 text-sm px-3 py-1 rounded-lg 
-                        transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {deletingId === post.id ? '...' : 'Eliminar'}
-                    </button>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-200 truncate"
+                          dangerouslySetInnerHTML={{ __html: post.title || '<span class="italic text-gray-500">Sin título</span>' }} />
+                        <p className="text-gray-500 text-xs mt-0.5">
+                          {formatDate(post.date)}
+                          {editing && <span className="text-blue-400 ml-2">· Editando ahora</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <a href={post.link} target="_blank"
+                        className="text-teal-300 hover:text-teal-200 text-sm px-2 py-1 transition">
+                        Ver
+                      </a>
+                      <button
+                        onClick={() => onEditar(post.id)}
+                        className="bg-gray-800 hover:bg-gray-700 text-sm px-3 py-1 rounded-lg transition"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDelete(post)}
+                        disabled={deletingId === post.id}
+                        className="bg-red-900/50 hover:bg-red-800 text-red-300 text-sm px-3 py-1 rounded-lg
+                          transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {deletingId === post.id ? '...' : 'Eliminar'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            )
+          })}
+        </div>
+      )}
 
-        {/* Paginación */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-4 mt-6">
-            <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition 
-                disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              ← Anterior
-            </button>
-            <span className="text-gray-500 text-sm">{page} / {totalPages}</span>
-            <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition 
-                disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Siguiente →
-            </button>
-          </div>
-        )}
+      {/* Paginación */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-4 mt-6">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition
+              disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Anterior
+          </button>
+          <span className="text-gray-500 text-sm">{page} / {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition
+              disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Siguiente →
+          </button>
+        </div>
+      )}
 
-      </div>
     </div>
   )
 }

@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getWpConfig } from '@/lib/wordpress'
 
 // Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
 // y la API REST de WordPress para el listado de notas (índice, sin :id).
 // Todas las credenciales de WordPress viven en variables de entorno para no
 // exponerlas nunca al cliente.
-const WP_URL = process.env.WP_URL
-const WP_USER = process.env.WP_USER
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD
-
-// WordPress usa "Application Passwords": se autentica con Basic Auth
-// codificando "usuario:app_password" en base64.
-const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString('base64')
 
 // ── Listar notas publicadas (con paginación y búsqueda) ───────
 // GET /api/posts?page=&search=
@@ -18,6 +12,11 @@ const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toStr
 // notas con paginación y filtro de texto, y desde ahí poder editarlas o
 // eliminarlas (ver app/api/posts/[id]/route.ts).
 export async function GET(req: NextRequest) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
     // "page": página actual que pide el frontend (por defecto la primera).
     const page = req.nextUrl.searchParams.get('page') ?? '1'
@@ -30,16 +29,21 @@ export async function GET(req: NextRequest) {
       page,
       orderby: 'date',
       order: 'desc', // las más recientes primero
-      // Se pide a WordPress solo los campos que necesita el listado del admin,
-      // para no traer de más (contenido completo, etc.).
-      _fields: 'id,title,date,link',
+      // Se pide a WordPress solo los campos que necesita el listado (más
+      // featured_media y _embedded, para la miniatura) para no traer de más
+      // (contenido completo, etc.).
+      _fields: 'id,title,date,link,featured_media,_embedded',
+      // _embed incluye el objeto de la imagen destacada (con sus distintos
+      // tamaños) en la misma respuesta, para no tener que pedirlo aparte
+      // por cada post como hace GET /api/posts/[id].
+      _embed: 'wp:featuredmedia',
     })
     // Solo se agrega "search" si el usuario efectivamente escribió algo;
     // si no, se omite en vez de mandar un string vacío a WordPress.
     if (search) params.set('search', search)
 
-    const res = await fetch(`${WP_URL}/wp-json/wp/v2/posts?${params}`, {
-      headers: { 'Authorization': authHeader },
+    const res = await fetch(`${wp.url}/wp-json/wp/v2/posts?${params}`, {
+      headers: { 'Authorization': wp.authHeader },
       cache: 'no-store', // sin cache: siempre traer el listado más actualizado
     })
 
@@ -55,12 +59,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       // Se devuelve un listado "aplanado" con solo lo que necesita la tabla
       // del admin, en vez de la estructura completa de WordPress.
-      posts: posts.map((p: any) => ({
-        id: p.id,
-        title: p.title?.rendered ?? '',
-        date: p.date,
-        link: p.link,
-      })),
+      posts: posts.map((p: any) => {
+        // La imagen destacada (si existe) viene embebida en _embedded gracias
+        // a _embed=wp:featuredmedia; se prioriza el tamaño "thumbnail" (más
+        // liviano para la miniatura de la lista) y se cae al original si WP
+        // no generó ese tamaño.
+        const media = p._embedded?.['wp:featuredmedia']?.[0]
+        const thumbnail = media?.media_details?.sizes?.thumbnail?.source_url
+          ?? media?.source_url
+          ?? null
+
+        return {
+          id: p.id,
+          title: p.title?.rendered ?? '',
+          date: p.date,
+          link: p.link,
+          thumbnail,
+        }
+      }),
       totalPages,
     })
   } catch {

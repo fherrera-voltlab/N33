@@ -25,7 +25,14 @@ interface PostItem {
   title: string
   date: string
   link: string
+  thumbnail: string | null
 }
+
+// Formatea fechas ISO al formato local es-MX; lo usan tanto el historial
+// de logs como el listado de notas.
+const formatDate = (iso: string) => new Date(iso).toLocaleString('es-MX', {
+  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+})
 
 // Componente raíz del panel: controla el "gate" de acceso por clave y,
 // una vez autenticado, delega toda la UI real en <Dashboard>.
@@ -100,26 +107,62 @@ export default function AdminPage() {
   return <Dashboard onLogout={() => { setAuthed(false); setCode('') }} />
 }
 
-// Dashboard principal ya autenticado. Tiene 3 vistas (tabs): historial de
-// publicaciones exitosas, historial de errores (ambas leídas de Supabase
-// vía /api/logs) y la lista de notas publicadas en WordPress (delegada a
-// <NotasPanel>, que usa /api/posts en vez de los logs).
+// Dashboard principal ya autenticado. Antes alternaba entre 3 pestañas
+// (publicaciones / errores / notas); ahora se ven las 2 fuentes de datos
+// juntas en un dash de 2 columnas: a la izquierda las notas publicadas en
+// WordPress (<NotasPanel>, vía /api/posts), a la derecha el historial de
+// publicaciones/errores de Supabase (<HistorialPanel>, vía /api/logs, con
+// un filtro Todos/Éxito/Error en vez de una pestaña aparte).
 function Dashboard({ onLogout }: { onLogout: () => void }) {
+  return (
+    <div className="min-h-screen bg-gray-950 text-white p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+
+        <div className="flex items-center gap-3 mb-6">
+          <h1 className="text-xl font-semibold text-gray-200">Panel de Administración</h1>
+          <a href="/publicar"
+            className="ml-auto text-gray-500 hover:text-white text-sm px-3 py-2 rounded-xl hover:bg-gray-900 transition">
+            Portal de Redacción
+          </a>
+          <button
+            onClick={onLogout}
+            className="text-gray-500 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-gray-900 transition"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <NotasPanel />
+          <HistorialPanel />
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+// ── Historial de publicaciones/errores ────────────────────────
+// Panel que lee GET /api/logs (tabla publicaciones_log de Supabase) y
+// reemplaza lo que antes eran 2 pestañas separadas (Publicaciones/Errores)
+// por un único listado con un filtro de status (Todos/Éxito/Error) y
+// rango de fechas opcional.
+function HistorialPanel() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
-  // 'success' | 'error' muestran el log de Supabase filtrado por status;
-  // 'notas' cambia a otra fuente de datos (WordPress) y no usa `logs`.
-  const [tab, setTab] = useState<'success' | 'error' | 'notas'>('success')
+  // null = sin filtrar por status (todos); si no, se manda tal cual a /api/logs
+  const [status, setStatus] = useState<'success' | 'error' | null>(null)
   // Rango de fechas opcional para filtrar el historial (formato yyyy-mm-dd
   // de <input type="date">, se manda tal cual como query params).
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
 
   // Trae el historial de logs desde Supabase (GET /api/logs) filtrado por
-  // el tab activo (success/error) y, si están definidos, por rango de fechas.
+  // el status activo y, si están definidos, por rango de fechas.
   const fetchLogs = () => {
     setLoading(true)
-    const params = new URLSearchParams({ status: tab })
+    const params = new URLSearchParams()
+    if (status) params.set('status', status)
     if (from) params.set('from', from)
     if (to) params.set('to', to)
 
@@ -129,133 +172,109 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       .finally(() => setLoading(false))
   }
 
-  // Refresca los logs cada vez que se cambia de tab, salvo en 'notas' donde
-  // no aplica (esa pestaña maneja su propia carga de datos en NotasPanel).
-  useEffect(() => { if (tab !== 'notas') fetchLogs() }, [tab])
-
-  // Formatea fechas ISO al formato local es-MX para mostrarlas en la lista
-  const formatDate = (iso: string) => new Date(iso).toLocaleString('es-MX', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
+  // Refresca los logs cada vez que se cambia el filtro de status.
+  useEffect(fetchLogs, [status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-4 md:p-8">
-      <div className="max-w-3xl mx-auto">
+    <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 md:p-6">
+      <h2 className="text-lg font-semibold text-gray-200 mb-4">Historial</h2>
 
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-xl font-semibold text-gray-200">Panel de Administración</h1>
-          <button
-            onClick={onLogout}
-            className="text-gray-500 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-gray-900 transition"
-          >
-            Cerrar sesión
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4">
-          <button
-            onClick={() => setTab('success')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition
-              ${tab === 'success' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
-          >
-            Publicaciones
-          </button>
-          <button
-            onClick={() => setTab('error')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition
-              ${tab === 'error' ? 'bg-red-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
-          >
-            Errores
-          </button>
-          <button
-            onClick={() => setTab('notas')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition
-              ${tab === 'notas' ? 'bg-teal-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
-          >
-            Notas publicadas
-          </button>
-        </div>
-
-        {tab === 'notas' ? <NotasPanel /> : (
-        <>
-
-
-        {/* Filtros de fecha */}
-        <div className="flex flex-wrap gap-3 mb-6 items-end">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Desde</label>
-            <input
-              type="date" value={from}
-              onChange={e => setFrom(e.target.value)}
-              className="bg-gray-900 rounded-xl px-3 py-2 text-sm outline-none border-2 border-transparent focus:border-blue-500 transition"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Hasta</label>
-            <input
-              type="date" value={to}
-              onChange={e => setTo(e.target.value)}
-              className="bg-gray-900 rounded-xl px-3 py-2 text-sm outline-none border-2 border-transparent focus:border-blue-500 transition"
-            />
-          </div>
-          <button
-            onClick={fetchLogs}
-            className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-xl text-sm transition"
-          >
-            Filtrar
-          </button>
-          {(from || to) && (
-            <button
-              onClick={() => { setFrom(''); setTo(''); fetchLogs() }}
-              className="text-gray-500 hover:text-white text-sm transition px-2"
-            >
-              Limpiar
-            </button>
-          )}
-        </div>
-
-        {/* Lista */}
-        {loading ? (
-          <p className="text-gray-500 text-sm">Cargando...</p>
-        ) : logs.length === 0 ? (
-          <p className="text-gray-500 text-sm">No hay registros{(from || to) ? ' en ese rango de fechas' : ''}.</p>
-        ) : (
-          <div className="space-y-2">
-            {logs.map(log => (
-              <div key={log.id} className="bg-gray-900 rounded-xl px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-200">
-                      {log.title || <span className="text-gray-500 italic">Sin título</span>}
-                    </p>
-                    {log.status === 'success' && log.wp_url && (
-                      <a href={log.wp_url} target="_blank"
-                        className="text-teal-300 hover:text-teal-200 text-sm transition">
-                        Ver nota publicada →
-                      </a>
-                    )}
-                    {log.status === 'error' && (
-                      <div className="mt-1">
-                        {log.error_step && (
-                          <span className="inline-block bg-red-900/60 text-red-300 text-xs px-2 py-0.5 rounded-full mr-2">
-                            Paso: {log.error_step}
-                          </span>
-                        )}
-                        <p className="text-red-400 text-sm mt-1">{log.error_message}</p>
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-gray-500 text-xs whitespace-nowrap">{formatDate(log.created_at)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        </>
-        )}
-
+      {/* Filtro de status */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setStatus(null)}
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition
+            ${status === null ? 'bg-gray-700 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
+        >
+          Todos
+        </button>
+        <button
+          onClick={() => setStatus('success')}
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition
+            ${status === 'success' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
+        >
+          Publicaciones
+        </button>
+        <button
+          onClick={() => setStatus('error')}
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition
+            ${status === 'error' ? 'bg-red-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'}`}
+        >
+          Errores
+        </button>
       </div>
+
+      {/* Filtros de fecha */}
+      <div className="flex flex-wrap gap-3 mb-6 items-end">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Desde</label>
+          <input
+            type="date" value={from}
+            onChange={e => setFrom(e.target.value)}
+            className="bg-gray-900 rounded-xl px-3 py-2 text-sm outline-none border-2 border-transparent focus:border-blue-500 transition"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Hasta</label>
+          <input
+            type="date" value={to}
+            onChange={e => setTo(e.target.value)}
+            className="bg-gray-900 rounded-xl px-3 py-2 text-sm outline-none border-2 border-transparent focus:border-blue-500 transition"
+          />
+        </div>
+        <button
+          onClick={fetchLogs}
+          className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-xl text-sm transition"
+        >
+          Filtrar
+        </button>
+        {(from || to) && (
+          <button
+            onClick={() => { setFrom(''); setTo(''); fetchLogs() }}
+            className="text-gray-500 hover:text-white text-sm transition px-2"
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+
+      {/* Lista */}
+      {loading ? (
+        <p className="text-gray-500 text-sm">Cargando...</p>
+      ) : logs.length === 0 ? (
+        <p className="text-gray-500 text-sm">No hay registros{(from || to) ? ' en ese rango de fechas' : ''}.</p>
+      ) : (
+        <div className="space-y-2">
+          {logs.map(log => (
+            <div key={log.id} className="bg-gray-900 rounded-xl px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <p className="font-medium text-gray-200">
+                    {log.title || <span className="text-gray-500 italic">Sin título</span>}
+                  </p>
+                  {log.status === 'success' && log.wp_url && (
+                    <a href={log.wp_url} target="_blank"
+                      className="text-teal-300 hover:text-teal-200 text-sm transition">
+                      Ver nota publicada →
+                    </a>
+                  )}
+                  {log.status === 'error' && (
+                    <div className="mt-1">
+                      {log.error_step && (
+                        <span className="inline-block bg-red-900/60 text-red-300 text-xs px-2 py-0.5 rounded-full mr-2">
+                          Paso: {log.error_step}
+                        </span>
+                      )}
+                      <p className="text-red-400 text-sm mt-1">{log.error_message}</p>
+                    </div>
+                  )}
+                </div>
+                <span className="text-gray-500 text-xs whitespace-nowrap">{formatDate(log.created_at)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -263,16 +282,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 // Notas de muestra para previsualizar la interfaz cuando no hay
 // conexión a WordPress (solo se usan en desarrollo)
 const DEMO_POSTS: PostItem[] = [
-  { id: -1, title: '(Ejemplo) Argentina avanza en energías renovables', date: new Date().toISOString(), link: '#' },
-  { id: -2, title: '(Ejemplo) Nueva ley de medios entra en vigencia', date: new Date(Date.now() - 86400000).toISOString(), link: '#' },
-  { id: -3, title: '(Ejemplo) El dólar cierra la semana estable', date: new Date(Date.now() - 172800000).toISOString(), link: '#' },
+  { id: -1, title: '(Ejemplo) Argentina avanza en energías renovables', date: new Date().toISOString(), link: '#', thumbnail: null },
+  { id: -2, title: '(Ejemplo) Nueva ley de medios entra en vigencia', date: new Date(Date.now() - 86400000).toISOString(), link: '#', thumbnail: null },
+  { id: -3, title: '(Ejemplo) El dólar cierra la semana estable', date: new Date(Date.now() - 172800000).toISOString(), link: '#', thumbnail: null },
 ]
 
 // ── Notas publicadas: editar / eliminar ───────────────────────
 // Panel que lista las notas reales tomadas directamente de WordPress
 // (vía /api/posts, que a su vez pega contra la REST API de WP), con
 // búsqueda por título, paginación y acciones de editar/eliminar.
-// A diferencia de las otras tabs, esto no lee de Supabase.
+// A diferencia del historial, esto no lee de Supabase.
 function NotasPanel() {
   const [posts, setPosts] = useState<PostItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -343,21 +362,18 @@ function NotasPanel() {
     }
   }
 
-  // Formatea fechas ISO al formato local es-MX para mostrarlas en la lista
-  const formatDate = (iso: string) => new Date(iso).toLocaleString('es-MX', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
-
   return (
-    <>
+    <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 md:p-6">
+      <h2 className="text-lg font-semibold text-gray-200 mb-4">Notas publicadas</h2>
+
       {/* Buscador */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-4">
         <input
           type="text" placeholder="Buscar por título..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && buscar()}
-          className="flex-1 bg-gray-900 rounded-xl px-4 py-2 text-sm placeholder-gray-600 
+          className="flex-1 bg-gray-900 rounded-xl px-4 py-2 text-sm placeholder-gray-600
             outline-none border-2 border-transparent focus:border-blue-500 transition"
         />
         <button
@@ -383,30 +399,37 @@ function NotasPanel() {
       ) : (
         <div className="space-y-2">
           {posts.map(post => (
-            <div key={post.id} className="bg-gray-900 rounded-xl px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
+            <div key={post.id} className="bg-gray-900 rounded-xl px-3 py-3">
+              <div className="flex items-start gap-3">
+                {/* Miniatura de la imagen destacada (o un ícono si no tiene) */}
+                <div className="w-14 h-14 shrink-0 rounded-lg overflow-hidden bg-gray-800 flex items-center justify-center">
+                  {post.thumbnail
+                    ? <img src={post.thumbnail} alt="" className="w-full h-full object-cover" />
+                    : <span className="text-gray-600 text-xl">📰</span>}
+                </div>
+
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-200 truncate"
                     dangerouslySetInnerHTML={{ __html: post.title || '<span class="italic text-gray-500">Sin título</span>' }} />
                   <p className="text-gray-500 text-xs mt-0.5">{formatDate(post.date)}</p>
-                </div>
-                <div className="flex gap-2 shrink-0 items-center">
-                  <a href={post.link} target="_blank"
-                    className="text-teal-300 hover:text-teal-200 text-sm px-2 py-1 transition">
-                    Ver
-                  </a>
-                  <a href={`/publicar?editar=${post.id}`}
-                    className="bg-gray-800 hover:bg-gray-700 text-sm px-3 py-1 rounded-lg transition">
-                    Editar
-                  </a>
-                  <button
-                    onClick={() => handleDelete(post)}
-                    disabled={deletingId === post.id}
-                    className="bg-red-900/50 hover:bg-red-800 text-red-300 text-sm px-3 py-1 rounded-lg 
-                      transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {deletingId === post.id ? '...' : 'Eliminar'}
-                  </button>
+                  <div className="flex gap-2 mt-2">
+                    <a href={post.link} target="_blank"
+                      className="text-teal-300 hover:text-teal-200 text-sm px-2 py-1 transition">
+                      Ver
+                    </a>
+                    <a href={`/publicar?editar=${post.id}`}
+                      className="bg-gray-800 hover:bg-gray-700 text-sm px-3 py-1 rounded-lg transition">
+                      Editar
+                    </a>
+                    <button
+                      onClick={() => handleDelete(post)}
+                      disabled={deletingId === post.id}
+                      className="bg-red-900/50 hover:bg-red-800 text-red-300 text-sm px-3 py-1 rounded-lg
+                        transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deletingId === post.id ? '...' : 'Eliminar'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -420,7 +443,7 @@ function NotasPanel() {
           <button
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition 
+            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
             ← Anterior
@@ -429,13 +452,13 @@ function NotasPanel() {
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition 
+            className="bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-xl text-sm transition
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Siguiente →
           </button>
         </div>
       )}
-    </>
+    </div>
   )
 }

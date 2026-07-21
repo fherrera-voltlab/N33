@@ -1,34 +1,53 @@
 import { NextResponse } from 'next/server'
+import { getWpUrl } from '@/lib/wordpress'
 
 // Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
 // y la API REST de WordPress para listar las categorías disponibles, así
 // el formulario de publicación puede mostrarlas en un selector.
-const WP_URL = process.env.WP_URL
+
+// Máximo permitido por página en la REST API de WordPress.
+const PER_PAGE = 100
 
 // ── Listar categorías disponibles ─────────────────────────────
 // GET /api/categorias
 // No requiere autenticación porque WordPress expone las categorías
 // públicamente (son de solo lectura para el visitante final).
 export async function GET() {
+  const wpUrl = getWpUrl()
+  if (!wpUrl) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
-    // per_page=50 asegura traer todas las categorías del sitio en una sola
-    // llamada. revalidate: 3600 cachea la respuesta por 1 hora, ya que las
-    // categorías cambian muy poco y así se evita golpear WP en cada carga.
-    const res = await fetch(`${WP_URL}/wp-json/wp/v2/categories?per_page=50`, {
-      next: { revalidate: 3600 }
-    })
+    // Se recorren todas las páginas que reporte WordPress (X-WP-TotalPages)
+    // en vez de asumir que un único per_page alcanza para todas las
+    // categorías del sitio.
+    let categories: any[] = []
+    let page = 1
+    let totalPages = 1
 
-    if (!res.ok) {
-      return NextResponse.json({ error: 'Error al obtener categorías' }, { status: res.status })
-    }
+    do {
+      const res = await fetch(
+        `${wpUrl}/wp-json/wp/v2/categories?per_page=${PER_PAGE}&page=${page}`,
+        { next: { revalidate: 3600 } } // cachea 1 hora: las categorías cambian muy poco
+      )
 
-    const categories = await res.json()
-    // Se descarta la categoría por defecto de WordPress ("Uncategorized"/
-    // "Sin categoría", según el idioma del sitio) porque no es una opción
-    // válida para el editor, y se devuelve solo id/name (sin el resto de
+      if (!res.ok) {
+        return NextResponse.json({ error: 'Error al obtener categorías' }, { status: res.status })
+      }
+
+      categories = categories.concat(await res.json())
+      totalPages = Number(res.headers.get('X-WP-TotalPages') ?? 1)
+      page++
+    } while (page <= totalPages)
+
+    // Se descarta la categoría por defecto de WordPress por id/slug (1 /
+    // "uncategorized", que WP nunca traduce ni cambia) en vez de por su
+    // nombre visible, ya que ese nombre varía según el idioma del sitio o
+    // si alguien lo renombró. Se devuelve solo id/name (sin el resto de
     // los campos que trae WP) para simplificar el consumo en el frontend.
     const filtered = categories
-      .filter((c: any) => c.name !== 'Uncategorized' && c.name !== 'Sin categoría')
+      .filter((c: any) => c.id !== 1 && c.slug !== 'uncategorized')
       .map((c: any) => ({ id: c.id, name: c.name }))
 
     return NextResponse.json(filtered)

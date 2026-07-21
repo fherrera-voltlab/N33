@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { logPublicacion } from '@/lib/log'
+import { getWpConfig } from '@/lib/wordpress'
 
 // Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
 // y la API REST de WordPress para crear una nota nueva. A diferencia de
 // app/api/posts/[id]/route.ts (que lee/edita/elimina una nota existente por
 // :id), este archivo solo expone POST y siempre crea un post desde cero.
-const WP_URL = process.env.WP_URL
-const WP_USER = process.env.WP_USER
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD
-
-// Mismo esquema de Basic Auth con Application Password que en posts/[id]:
-// se codifica "usuario:app_password" en base64 para autenticar contra WP.
-const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString('base64')
 
 // ── Crear una nota nueva ───────────────────────────────────────
 // POST /api/publicar
@@ -21,6 +15,11 @@ const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toStr
 // el frontend, por lo que aquí no hace falta resolver nombres ni URLs
 // como sí hace el GET de posts/[id].
 export async function POST(req: NextRequest) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
     const body = await req.json()
     const { title, excerpt, content, categoryId, tags, featuredMediaId } = body
@@ -28,10 +27,10 @@ export async function POST(req: NextRequest) {
     // Sin :id en la URL: WP crea un recurso nuevo en la colección de posts.
     // status: 'publish' hace que la nota quede visible de inmediato (no se
     // guarda como borrador).
-    const postRes = await fetch(`${WP_URL}/wp-json/wp/v2/posts`, {
+    const postRes = await fetch(`${wp.url}/wp-json/wp/v2/posts`, {
       method: 'POST',
       headers: {
-        'Authorization': authHeader,
+        'Authorization': wp.authHeader,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

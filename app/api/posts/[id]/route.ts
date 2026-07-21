@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { logPublicacion } from '@/lib/log'
+import { getWpConfig } from '@/lib/wordpress'
 
 // Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
 // y la API REST de WordPress para una nota puntual (GET, PUT, DELETE por :id).
 // Todas las credenciales de WordPress viven en variables de entorno para no
 // exponerlas nunca al cliente.
-const WP_URL = process.env.WP_URL
-const WP_USER = process.env.WP_USER
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD
-
-// WordPress usa "Application Passwords": se autentica con Basic Auth
-// codificando "usuario:app_password" en base64. Este header se reutiliza
-// en las tres rutas (GET, PUT, DELETE) de este archivo.
-const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString('base64')
 
 // ── Obtener una nota completa para edición ────────────────────
 // GET /api/posts/[id]
@@ -22,12 +15,17 @@ export async function GET(
   _req: NextRequest, // no se usa el request, solo el parámetro de la URL
   { params }: { params: { id: string } }
 ) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
     // context=edit le pide a WordPress los campos "raw" (title.raw,
     // content.raw, etc.) en vez de los ya renderizados en HTML.
     const res = await fetch(
-      `${WP_URL}/wp-json/wp/v2/posts/${params.id}?context=edit`,
-      { headers: { 'Authorization': authHeader }, cache: 'no-store' } // sin cache: siempre traer la versión más reciente
+      `${wp.url}/wp-json/wp/v2/posts/${params.id}?context=edit`,
+      { headers: { 'Authorization': wp.authHeader }, cache: 'no-store' } // sin cache: siempre traer la versión más reciente
     )
 
     if (!res.ok) {
@@ -47,8 +45,8 @@ export async function GET(
       const tagsRes = await fetch(
         // include=1,2,3 filtra por esos IDs puntuales; per_page=100 asegura
         // traerlos todos en una sola llamada (evita paginación).
-        `${WP_URL}/wp-json/wp/v2/tags?include=${post.tags.join(',')}&per_page=100`,
-        { headers: { 'Authorization': authHeader } }
+        `${wp.url}/wp-json/wp/v2/tags?include=${post.tags.join(',')}&per_page=100`,
+        { headers: { 'Authorization': wp.authHeader } }
       )
       if (tagsRes.ok) {
         const tagsData = await tagsRes.json()
@@ -65,8 +63,8 @@ export async function GET(
       const mediaRes = await fetch(
         // _fields=source_url le pide a WP que devuelva únicamente ese
         // campo, para no traer todo el objeto media de más.
-        `${WP_URL}/wp-json/wp/v2/media/${post.featured_media}?_fields=source_url`,
-        { headers: { 'Authorization': authHeader } }
+        `${wp.url}/wp-json/wp/v2/media/${post.featured_media}?_fields=source_url`,
+        { headers: { 'Authorization': wp.authHeader } }
       )
       if (mediaRes.ok) {
         const mediaData = await mediaRes.json()
@@ -104,6 +102,11 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   // Se declara fuera del try para que esté disponible también en el catch
   // (así el log de error puede incluir el título aunque falle el fetch).
   let title: string | undefined
@@ -112,10 +115,10 @@ export async function PUT(
     title = body.title
     const { excerpt, content, categoryId, tags, featuredMediaId } = body
 
-    const res = await fetch(`${WP_URL}/wp-json/wp/v2/posts/${params.id}`, {
+    const res = await fetch(`${wp.url}/wp-json/wp/v2/posts/${params.id}`, {
       method: 'POST', // WordPress acepta POST para actualizar recursos existentes
       headers: {
-        'Authorization': authHeader,
+        'Authorization': wp.authHeader,
         'Content-Type': 'application/json',
       },
       // Se traducen los nombres "amigables" del frontend a los nombres
@@ -175,10 +178,15 @@ export async function DELETE(
   _req: NextRequest, // no se usa el body, solo el id de la URL
   { params }: { params: { id: string } }
 ) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
-    const res = await fetch(`${WP_URL}/wp-json/wp/v2/posts/${params.id}`, {
+    const res = await fetch(`${wp.url}/wp-json/wp/v2/posts/${params.id}`, {
       method: 'DELETE',
-      headers: { 'Authorization': authHeader },
+      headers: { 'Authorization': wp.authHeader },
     })
 
     if (!res.ok) {

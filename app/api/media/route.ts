@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { logPublicacion } from '@/lib/log'
+import { getWpConfig } from '@/lib/wordpress'
 
 // Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
 // y la API REST de WordPress para subir archivos de media (imágenes).
 // Las credenciales de WordPress viven en variables de entorno para no
 // exponerlas nunca al cliente.
-const WP_URL = process.env.WP_URL
-const WP_USER = process.env.WP_USER
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD
-
-// WordPress usa "Application Passwords": se autentica con Basic Auth
-// codificando "usuario:app_password" en base64.
-const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString('base64')
 
 // ── Subir una imagen a la librería de media de WordPress ─────
 // POST /api/media
 // Recibe un archivo desde el frontend (FormData) y lo sube a WordPress
 // para poder usarlo luego como imagen destacada de una nota.
 export async function POST(req: NextRequest) {
+  const wp = getWpConfig()
+  if (!wp) {
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+
   try {
     // El frontend envía la imagen como multipart/form-data (no JSON),
     // por eso se lee con formData() en vez de req.json().
@@ -34,10 +33,10 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    const mediaRes = await fetch(`${WP_URL}/wp-json/wp/v2/media`, {
+    const mediaRes = await fetch(`${wp.url}/wp-json/wp/v2/media`, {
       method: 'POST',
       headers: {
-        'Authorization': authHeader,
+        'Authorization': wp.authHeader,
         // WordPress necesita el nombre de archivo en este header para
         // saber cómo nombrar/tipar el adjunto que se está subiendo.
         'Content-Disposition': `attachment; filename="${file.name}"`,
