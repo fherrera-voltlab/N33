@@ -1,7 +1,13 @@
 'use client';
+// Componente de cliente: maneja estado local (inputs, previews de archivos, loading)
+// e interacciones del usuario (drag & drop de medios, agregar tags/categorías), por lo
+// que no puede ser un server component.
 
 import React, { useState } from 'react';
 
+// Representa un archivo de imagen/video seleccionado por el usuario antes de enviarlo.
+// `preview` es una URL de objeto local (blob) solo para mostrarlo en el formulario,
+// y `order` permite reordenar los medios manualmente antes de publicar.
 interface MediaFile {
   id: string;
   file: File;
@@ -10,6 +16,7 @@ interface MediaFile {
   order: number;
 }
 
+// Estructura de los datos de la nota que se envían al webhook.
 interface FormData {
   title: string;
   subtitle: string;
@@ -18,6 +25,9 @@ interface FormData {
   tags: string[];
 }
 
+// Formulario de publicación de noticias. No llama directamente a la REST API de
+// WordPress: envía los datos (incluyendo medios en base64) a un webhook de n8n,
+// que es quien se encarga de crear el post en WordPress del otro lado.
 export default function NewsForm() {
   const [form, setForm] = useState<FormData>({
     title: '',
@@ -36,6 +46,8 @@ export default function NewsForm() {
     text: string;
   } | null>(null);
 
+  // Handler genérico para inputs/textarea controlados: usa el atributo `name`
+  // para actualizar solo el campo correspondiente del form.
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
@@ -46,6 +58,7 @@ export default function NewsForm() {
     }));
   };
 
+  // Evita agregar tags vacíos o duplicados.
   const addTag = () => {
     if (inputTag.trim() && !form.tags.includes(inputTag.trim())) {
       setForm((prev) => ({
@@ -63,6 +76,7 @@ export default function NewsForm() {
     }));
   };
 
+  // Misma lógica de dedupe que addTag, pero para categorías.
   const addCategory = () => {
     if (
       inputCategory.trim() &&
@@ -83,6 +97,10 @@ export default function NewsForm() {
     }));
   };
 
+  // Filtra los archivos seleccionados a solo imagen/video (ignora otros tipos)
+  // y genera una preview local con createObjectURL para mostrarla sin subir nada
+  // todavía. El `order` se calcula sobre lo ya existente para mantener el orden
+  // de selección. Se limpia el input al final para poder re-seleccionar el mismo archivo.
   const handleMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
 
@@ -112,6 +130,9 @@ export default function NewsForm() {
     setMedia((prev) => prev.filter((m) => m.id !== id));
   };
 
+  // Reordena la lista intercambiando de posición con el elemento vecino
+  // (no permite mover más allá de los extremos) y recalcula `order` según
+  // el nuevo índice, que es lo que se envía al webhook para respetar el orden.
   const moveMedia = (id: string, direction: 'up' | 'down') => {
     const index = media.findIndex((m) => m.id === id);
     if ((direction === 'up' && index === 0) || (direction === 'down' && index === media.length - 1)) {
@@ -125,6 +146,7 @@ export default function NewsForm() {
     setMedia(newMedia.map((m, i) => ({ ...m, order: i })));
   };
 
+  // Título y contenido son los únicos campos obligatorios antes de enviar.
   const validateForm = (): boolean => {
     if (!form.title.trim()) {
       setMessage({ type: 'error', text: 'El título es obligatorio' });
@@ -137,6 +159,9 @@ export default function NewsForm() {
     return true;
   };
 
+  // Envía la nota al webhook de n8n (no a WordPress directamente): n8n recibe
+  // el JSON con los medios en base64 y del otro lado se encarga de crear el
+  // post en WordPress vía su REST API.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage(null);
@@ -198,6 +223,7 @@ export default function NewsForm() {
       });
       setMedia([]);
 
+      // Sube el scroll para que el mensaje de éxito (arriba del form) sea visible.
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
@@ -220,6 +246,7 @@ export default function NewsForm() {
           </p>
         </div>
 
+        {/* Feedback de éxito/error del último submit; color según message.type */}
         {message && (
           <div
             className={`mb-6 p-4 rounded-lg ${
@@ -324,6 +351,7 @@ export default function NewsForm() {
                 +
               </button>
             </div>
+            {/* Lista de categorías agregadas, cada una con botón para quitarla */}
             {form.categories.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {form.categories.map((cat) => (
@@ -371,6 +399,7 @@ export default function NewsForm() {
                 +
               </button>
             </div>
+            {/* Lista de tags agregados, mismo patrón que las categorías */}
             {form.tags.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {form.tags.map((tag) => (
@@ -411,6 +440,8 @@ export default function NewsForm() {
               </label>
             </div>
 
+            {/* Previsualización de medios seleccionados, con controles para
+                reordenar (flechas, ocultas en los extremos) y eliminar */}
             {media.length > 0 && (
               <div className="mt-6 space-y-3">
                 <h3 className="font-semibold text-slate-900">Medios ({media.length})</h3>
@@ -433,6 +464,7 @@ export default function NewsForm() {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      {/* Botón "subir" solo visible si no es el primero */}
                       {idx > 0 && (
                         <button
                           type="button"
@@ -443,6 +475,7 @@ export default function NewsForm() {
                           ↑
                         </button>
                       )}
+                      {/* Botón "bajar" solo visible si no es el último */}
                       {idx < media.length - 1 && (
                         <button
                           type="button"

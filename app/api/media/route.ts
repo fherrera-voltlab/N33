@@ -1,14 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { logPublicacion } from '@/lib/log'
 
+// Endpoint (App Router de Next.js) que actúa como proxy entre el frontend
+// y la API REST de WordPress para subir archivos de media (imágenes).
+// Las credenciales de WordPress viven en variables de entorno para no
+// exponerlas nunca al cliente.
 const WP_URL = process.env.WP_URL
 const WP_USER = process.env.WP_USER
 const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD
 
+// WordPress usa "Application Passwords": se autentica con Basic Auth
+// codificando "usuario:app_password" en base64.
 const authHeader = 'Basic ' + Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString('base64')
 
+// ── Subir una imagen a la librería de media de WordPress ─────
+// POST /api/media
+// Recibe un archivo desde el frontend (FormData) y lo sube a WordPress
+// para poder usarlo luego como imagen destacada de una nota.
 export async function POST(req: NextRequest) {
   try {
+    // El frontend envía la imagen como multipart/form-data (no JSON),
+    // por eso se lee con formData() en vez de req.json().
     const formData = await req.formData()
     const file = formData.get('file') as File
 
@@ -16,6 +28,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No se recibió imagen' }, { status: 400 })
     }
 
+    // La API de media de WordPress espera el binario crudo del archivo
+    // en el body, no un FormData; por eso se convierte a ArrayBuffer y
+    // luego a Buffer antes de reenviarlo.
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
@@ -23,7 +38,10 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: {
         'Authorization': authHeader,
+        // WordPress necesita el nombre de archivo en este header para
+        // saber cómo nombrar/tipar el adjunto que se está subiendo.
         'Content-Disposition': `attachment; filename="${file.name}"`,
+        // Se reenvía el mismo Content-Type del archivo original (ej. image/png).
         'Content-Type': file.type,
       },
       body: buffer as any,
@@ -31,6 +49,8 @@ export async function POST(req: NextRequest) {
 
     if (!mediaRes.ok) {
       const error = await mediaRes.json()
+      // Se deja constancia del fallo en el log antes de responder al cliente,
+      // usando 'media' como paso para diferenciarlo de errores de publicar/editar.
       await logPublicacion({
         status: 'error',
         error_message: error?.message ?? 'Error al subir imagen',
@@ -40,12 +60,17 @@ export async function POST(req: NextRequest) {
     }
 
     const media = await mediaRes.json()
-    return NextResponse.json({ 
-      id: media.id, 
-      url: media.source_url 
+    // Se devuelven solo id y url (no todo el objeto media de WP): el id
+    // se usa como featured_media al publicar/editar, y la url para la
+    // vista previa en el frontend.
+    return NextResponse.json({
+      id: media.id,
+      url: media.source_url
     })
 
   } catch (err: any) {
+    // Error inesperado (red, parseo, etc.): también se loggea antes de
+    // responder con un 500 genérico al cliente.
     await logPublicacion({
       status: 'error',
       error_message: err.message ?? 'Error al subir imagen',

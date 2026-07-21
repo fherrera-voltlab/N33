@@ -1,6 +1,14 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = process.env.SUPABASE_URL!
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
+// Cliente único (singleton) reutilizado entre llamadas para no reabrir
+// conexiones innecesariamente en cada request.
+let client: SupabaseClient | null = null
 
-export const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+// Creación diferida: evita que el build falle cuando las variables
+// de entorno no están definidas (solo se necesitan en tiempo de ejecución).
+export function getSupabaseAdmin(): SupabaseClient {
+  if (!client) {
+    client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+  }
+  return client
+}
